@@ -1,0 +1,91 @@
+name: Build Manager MOD
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build-all:
+    name: Build ksud & manager
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup need_upload
+        id: need_upload
+        run: |
+          if [ ! -z "${{ secrets.BOT_TOKEN }}" ]; then
+            echo "UPLOAD=true" >> $GITHUB_OUTPUT
+          else
+            echo "UPLOAD=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup rustup
+        run: |
+          rustup update stable
+          rustup target add aarch64-linux-android
+
+      - name: Setup rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: userspace/ksud
+          cache-targets: false
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r29
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Setup signing
+        working-directory: manager
+        run: |
+          echo KEYSTORE_PASSWORD='${{ secrets.KEYSTORE_PASSWORD }}' >> gradle.properties
+          echo KEY_ALIAS='${{ secrets.KEY_ALIAS }}' >> gradle.properties
+          echo KEY_PASSWORD='${{ secrets.KEY_PASSWORD }}' >> gradle.properties
+          echo KEYSTORE_FILE='keystore.jks' >> gradle.properties
+          echo "${{ secrets.KEYSTORE }}" | base64 -d > keystore.jks
+          chmod 644 keystore.jks
+
+      - name: Build ksud
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          source .github/scripts/setup-rust-build.sh aarch64-linux-android 26
+          cargo build --target aarch64-linux-android --release --manifest-path ./Cargo.toml
+
+      - name: Setup native libraries
+        run: |
+          mkdir -p manager/app/src/main/jniLibs/arm64-v8a
+          cp target/aarch64-linux-android/release/ksud manager/app/src/main/jniLibs/arm64-v8a/libksud.so
+          chmod 644 manager/app/src/main/jniLibs/arm64-v8a/libksud.so
+
+      - name: Build manager
+        working-directory: manager
+        run: |
+          ./gradlew clean assembleRelease
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: manager
+          path: manager/app/build/outputs/apk/release/*.apk
