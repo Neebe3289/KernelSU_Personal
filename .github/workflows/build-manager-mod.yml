@@ -89,3 +89,21 @@ jobs:
         with:
           name: manager
           path: manager/app/build/outputs/apk/release/*.apk
+
+      - name: Upload to telegram
+        if: steps.need_upload.outputs.UPLOAD == 'true'
+        env:
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          COMMIT_URL: ${{ github.event.head_commit.url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Manager
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ ! -z "${{ secrets.BOT_TOKEN }}" ]; then
+            export VERSION=$(git rev-list --count HEAD)
+            APK=$(find ./manager/app/build/outputs/apk/release -name "*.apk")
+            pip3 install telethon
+            python3 $GITHUB_WORKSPACE/scripts/ksubot.py $APK
+          fi
